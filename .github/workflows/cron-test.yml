@@ -12,6 +12,13 @@ jobs:
     steps:
       - name: Test Byet PHP endpoint
         run: |
-          echo "Testing Byet endpoint..."
-          curl -i --max-time 30 \
-            "https://mobarakepl.byethost13.com/cron-test.php"
+          echo "=== HTTPS TEST ==="
+          curl -4 -v --http1.1 \
+            -A "Mozilla/5.0" \
+            --max-time 30 \
+            "https://mobarakepl.byethost13.com/cron-test.php" \
+            -o response.txt \
+            -w "\nHTTP_CODE=%{http_code}\nSIZE=%{size_download}\n"
+
+          echo "=== RESPONSE BODY ==="
+          cat response.txt || true
