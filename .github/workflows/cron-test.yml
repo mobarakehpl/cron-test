@@ -1,0 +1,17 @@
+name: Mobarakeh Cron Test
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7 * * * *'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test Byet PHP endpoint
+        run: |
+          echo "Testing Byet endpoint..."
+          curl -i --max-time 30 \
+            "https://mobarakepl.byethost13.com/cron-test.php"
