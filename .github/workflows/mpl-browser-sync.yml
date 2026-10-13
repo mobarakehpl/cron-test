@@ -1,0 +1,39 @@
+name: Mobarakeh Library Browser Sync - TLS Workaround Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mpl-browser-sync.yml'
+      - 'scripts/mpl-browser-sync.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobarakeh-library-browser-sync-test
+  cancel-in-progress: false
+
+jobs:
+  browser-sync-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Open public site in Chromium and wait for WordPress sync response
+        env:
+          MPL_SITE_URL: ${{ vars.MPL_SITE_URL || 'https://mobarakehpl.ir/' }}
+        run: xvfb-run -a node scripts/mpl-browser-sync.mjs
