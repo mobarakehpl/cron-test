@@ -40,4 +40,4 @@ jobs:
       - name: Open the website and trigger browser sync
         env:
           MPL_SITE_URL: ${{ vars.MPL_SITE_URL || 'https://mobarakehpl.ir/' }}
-        run: node scripts/mpl-browser-sync.mjs
+        run: xvfb-run -a node scripts/mpl-browser-sync.mjs
