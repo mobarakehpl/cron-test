@@ -1,6 +1,12 @@
 name: Mobarakeh Library Browser Sync
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/mpl-browser-sync.yml'
+      - 'scripts/mpl-browser-sync.mjs'
   schedule:
     # GitHub Actions uses UTC. The site's own handler verifies the six-hour due window.
     - cron: '17 0,6,12,18 * * *'
