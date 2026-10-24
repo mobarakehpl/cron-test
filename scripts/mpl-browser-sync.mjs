@@ -2,14 +2,22 @@ import { chromium } from 'playwright';
 
 const siteUrl = process.env.MPL_SITE_URL || 'https://mobarakehpl.ir/';
 const responseTimeoutMs = 4 * 60 * 1000;
+const responseBodyTimeoutMs = 30 * 1000;
 const retryDelayMs = 5 * 60 * 1000;
 
-function isSyncResponse(response) {
-  const request = response.request();
+function isSyncRequest(request) {
   const postData = request.postData() || '';
   return request.method() === 'POST'
-    && response.url().includes('admin-ajax.php')
+    && request.url().includes('admin-ajax.php')
     && /(?:^|&)action=mpl_browser_sync(?:&|$)/.test(postData);
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function logPageDiagnostics(page, label) {
@@ -33,7 +41,7 @@ async function logPageDiagnostics(page, label) {
 
 async function browserVisit(page, label, reload = false) {
   console.log(`${label}: opening ${siteUrl}`);
-  const responsePromise = page.waitForResponse(isSyncResponse, { timeout: responseTimeoutMs })
+  const responsePromise = page.waitForResponse(isSyncRequestResponse, { timeout: responseTimeoutMs })
     .then(response => ({ response }), error => ({ error }));
 
   try {
@@ -50,23 +58,38 @@ async function browserVisit(page, label, reload = false) {
 
   const outcome = await responsePromise;
   if (outcome.error) {
-    console.error(`No sync AJAX response within ${responseTimeoutMs / 1000}s: ${outcome.error.message}`);
+    console.error(`No matching mpl_browser_sync AJAX response within ${responseTimeoutMs / 1000}s: ${outcome.error.message}`);
     await logPageDiagnostics(page, label);
-    throw new Error('Site did not issue the expected WordPress browser-sync AJAX request.');
+    throw new Error('Site did not return the expected WordPress browser-sync AJAX response.');
   }
 
   const response = outcome.response;
+  console.log(`${label}: matched sync response headers received; HTTP ${response.status()} ${response.url()}`);
+  let body;
+  try {
+    body = await withTimeout(response.text(), responseBodyTimeoutMs, 'Reading sync AJAX response body');
+  } catch (error) {
+    console.error(`${label}: response body could not be read: ${error.message}`);
+    console.error(`${label}: response headers=${JSON.stringify(await response.allHeaders().catch(() => ({}))) }`);
+    throw new Error('WordPress received the sync request but its response body did not finish in time; check PHP/server-side sync execution.');
+  }
+
+  console.log(`${label}: sync response body (${body.length} chars) = ${body.slice(0, 4000)}`);
   let json;
   try {
-    json = await response.json();
+    json = JSON.parse(body);
   } catch {
-    throw new Error(`Sync endpoint did not return JSON (HTTP ${response.status()}).`);
+    throw new Error(`Sync endpoint did not return valid JSON (HTTP ${response.status()}).`);
   }
-  console.log(`${label}: HTTP ${response.status()}, JSON=${JSON.stringify(json)}`);
   if (!response.ok() || json?.success !== true) {
-    throw new Error('WordPress browser-sync AJAX returned an error.');
+    throw new Error(`WordPress browser-sync AJAX returned an error (HTTP ${response.status()}; success=${json?.success}).`);
   }
   return json.data || {};
+}
+
+// Match the response only when its originating request contains the expected action.
+async function isSyncRequestResponse(response) {
+  return isSyncRequest(response.request());
 }
 
 const browser = await chromium.launch({ headless: false, channel: 'chromium' });
@@ -85,18 +108,24 @@ try {
   page.on('requestfailed', request => {
     console.log(`Request failed: ${request.method()} ${request.url()} :: ${request.failure()?.errorText || 'unknown'}`);
   });
+  page.on('requestfinished', request => {
+    if (isSyncRequest(request)) console.log(`Sync AJAX request finished downloading: ${request.method()} ${request.url()}`);
+  });
   page.on('pageerror', error => console.error(`Browser JavaScript error: ${error.message}`));
   page.on('console', message => {
     if (message.type() === 'error') console.error(`Browser console error: ${message.text()}`);
   });
   page.on('request', request => {
     if (request.url().includes('library-browser-sync') || request.url().includes('admin-ajax.php')) {
-      console.log(`Relevant request: ${request.method()} ${request.url()}`);
+      const sync = isSyncRequest(request);
+      console.log(`Relevant request${sync ? ' [MATCHED mpl_browser_sync]' : ''}: ${request.method()} ${request.url()}`);
+      if (sync) console.log(`Sync AJAX POST data: ${(request.postData() || '').slice(0, 1000)}`);
     }
   });
   page.on('response', response => {
     if (response.url().includes('library-browser-sync') || response.url().includes('admin-ajax.php')) {
-      console.log(`Relevant response: HTTP ${response.status()} ${response.url()}`);
+      const sync = isSyncRequest(response.request());
+      console.log(`Relevant response${sync ? ' [MATCHED mpl_browser_sync]' : ''}: HTTP ${response.status()} ${response.url()}`);
     }
   });
 
