@@ -12,6 +12,25 @@ function isSyncResponse(response) {
     && /(?:^|&)action=mpl_browser_sync(?:&|$)/.test(postData);
 }
 
+async function logPageDiagnostics(page, label) {
+  console.error(`${label}: URL=${page.url()}`);
+  try { console.error(`${label}: title=${await page.title()}`); } catch {}
+  try {
+    const state = await page.evaluate(() => ({
+      scripts: Array.from(document.scripts).map(script => script.src).filter(Boolean),
+      syncScripts: Array.from(document.scripts).map(script => script.src)
+        .filter(src => src.includes('library-browser-sync')),
+      resources: performance.getEntriesByType('resource')
+        .map(entry => entry.name)
+        .filter(url => url.includes('library-browser-sync') || url.includes('admin-ajax.php')),
+      excerpt: (document.body?.innerText || '').slice(0, 800),
+    }));
+    console.error(`${label}: page diagnostics=${JSON.stringify(state)}`);
+  } catch (error) {
+    console.error(`${label}: could not collect page diagnostics: ${error.message}`);
+  }
+}
+
 async function browserVisit(page, label, reload = false) {
   console.log(`${label}: opening ${siteUrl}`);
   const responsePromise = page.waitForResponse(isSyncResponse, { timeout: responseTimeoutMs })
@@ -25,18 +44,14 @@ async function browserVisit(page, label, reload = false) {
     }
   } catch (error) {
     console.error(`Navigation error: ${error.message}`);
-    console.error(`Page URL: ${page.url()}`);
-    try { console.error(`Page title: ${await page.title()}`); } catch {}
-    try { console.error(`Page excerpt: ${(await page.locator('body').innerText({ timeout: 3000 })).slice(0, 800)}`); } catch {}
+    await logPageDiagnostics(page, label);
     throw error;
   }
 
   const outcome = await responsePromise;
   if (outcome.error) {
-    console.error(`No sync AJAX response: ${outcome.error.message}`);
-    console.error(`Page URL: ${page.url()}`);
-    try { console.error(`Page title: ${await page.title()}`); } catch {}
-    try { console.error(`Page excerpt: ${(await page.locator('body').innerText({ timeout: 3000 })).slice(0, 800)}`); } catch {}
+    console.error(`No sync AJAX response within ${responseTimeoutMs / 1000}s: ${outcome.error.message}`);
+    await logPageDiagnostics(page, label);
     throw new Error('Site did not issue the expected WordPress browser-sync AJAX request.');
   }
 
@@ -56,9 +71,9 @@ async function browserVisit(page, label, reload = false) {
 
 const browser = await chromium.launch({ headless: false, channel: 'chromium' });
 try {
-  // This is a narrowly scoped workaround for the hosting certificate error.
-  // The browser context visits only the public homepage and does not sign in.
-  // HTTPS remains encrypted, but server-certificate authenticity is not verified.
+  // Temporary diagnostic workaround for the hosting certificate error.
+  // This public-page-only browser does not sign in; certificate authenticity
+  // is not verified, so this is not a secure long-term fix.
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 1365, height: 900 },
@@ -69,6 +84,20 @@ try {
   page.setDefaultNavigationTimeout(120_000);
   page.on('requestfailed', request => {
     console.log(`Request failed: ${request.method()} ${request.url()} :: ${request.failure()?.errorText || 'unknown'}`);
+  });
+  page.on('pageerror', error => console.error(`Browser JavaScript error: ${error.message}`));
+  page.on('console', message => {
+    if (message.type() === 'error') console.error(`Browser console error: ${message.text()}`);
+  });
+  page.on('request', request => {
+    if (request.url().includes('library-browser-sync') || request.url().includes('admin-ajax.php')) {
+      console.log(`Relevant request: ${request.method()} ${request.url()}`);
+    }
+  });
+  page.on('response', response => {
+    if (response.url().includes('library-browser-sync') || response.url().includes('admin-ajax.php')) {
+      console.log(`Relevant response: HTTP ${response.status()} ${response.url()}`);
+    }
   });
 
   let result = await browserVisit(page, 'Browser visit 1');

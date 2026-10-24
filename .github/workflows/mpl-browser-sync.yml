@@ -1,6 +1,10 @@
 name: Mobarakeh Library Browser Sync - TLS Workaround Test
 
 on:
+  # GitHub cron uses UTC. These times correspond to 06:43, 12:43, 18:43,
+  # and 00:43 in Iran (UTC+03:30). Scheduled jobs can start later than requested.
+  schedule:
+    - cron: '13 3,9,15,21 * * *'
   push:
     branches: [main]
     paths:
@@ -18,7 +22,7 @@ concurrency:
 jobs:
   browser-sync-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
